@@ -18,7 +18,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  * 极简 HTTP 服务：只做三件事
  *  - GET  /            手机浏览器打开的上传页面（选文件 → PUT 原始流上传，带进度）
  *  - PUT  /upload      原始字节写入文件（不走 multipart，省掉一整套解析）
- *  - 其余 /api/*、/d、/install、/delete 供页面和电视端调用
+ *  - 其余 api、d、install、delete 接口供页面和电视端调用
  */
 class HttpServer(
     private val port: Int,
