@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">局域网快传</string>
+    <string name="subtitle">手机 → 电视，一条网线都不用</string>
+    <string name="status_idle">○ 未启动</string>
+    <string name="hint">点下面的按钮启动服务。</string>
+    <string name="files_title">收到的文件</string>
+    <string name="stop">停止服务</string>
+</resources>

@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>局域网快传</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+         background:#111418; color:#e8eaed; padding:20px 16px 40px; }
+  h1 { font-size:20px; margin:6px 0 2px; }
+  .sub { color:#8b949e; font-size:13px; margin-bottom:18px; }
+  .card { background:#1b2027; border:1px solid #262d36; border-radius:14px; padding:16px; margin-bottom:14px; }
+  .drop { border:2px dashed #2f3947; border-radius:14px; padding:26px 12px; text-align:center; color:#9aa4b2; }
+  .drop.over { border-color:#4c8dff; color:#cfe0ff; background:#182234; }
+  .big { font-size:15px; color:#e8eaed; margin-bottom:6px; }
+  button { appearance:none; border:0; border-radius:10px; padding:11px 16px; font-size:15px;
+           background:#2b6cf6; color:#fff; font-weight:600; }
+  button:active { transform:scale(.985); }
+  button.ghost { background:#232a33; color:#c8d1dc; }
+  .row { display:flex; gap:8px; align-items:center; }
+  .file { display:flex; gap:10px; align-items:center; padding:11px 0; border-bottom:1px solid #232a33; }
+  .file:last-child { border-bottom:0; }
+  .name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:14px; }
+  .meta { color:#8b949e; font-size:12px; margin-top:2px; }
+  .bar { height:6px; background:#232a33; border-radius:99px; overflow:hidden; margin-top:12px; display:none; }
+  .bar > i { display:block; height:100%; width:0; background:#2b6cf6; transition:width .15s linear; }
+  .tip { color:#8b949e; font-size:12px; margin-top:10px; line-height:1.6; }
+  .ok { color:#39d353; } .err { color:#ff6b6b; }
+</style>
+</head>
+<body>
+  <h1>局域网快传</h1>
+  <div class="sub">手机选文件 → 传到电视，传完可以直接在电视上安装</div>
+
+  <div class="card" id="uploadCard">
+    <div class="drop" id="drop">
+      <div class="big">点击选择文件</div>
+      <div>也可以把文件拖进来（APK / 图片 / 视频都行）</div>
+      <input type="file" id="picker" multiple hidden>
+    </div>
+    <div class="bar" id="bar"><i id="barIn"></i></div>
+    <div class="tip" id="status"></div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="justify-content:space-between;margin-bottom:6px">
+      <div class="big" style="margin:0">电视上的文件</div>
+      <button class="ghost" onclick="load()">刷新</button>
+    </div>
+    <div id="list"><div class="meta">加载中…</div></div>
+  </div>
+
+<script>
+const drop = document.getElementById('drop');
+const picker = document.getElementById('picker');
+const bar = document.getElementById('bar');
+const barIn = document.getElementById('barIn');
+const statusEl = document.getElementById('status');
+
+function fmt(n){
+  if (n > 1024*1024) return (n/1024/1024).toFixed(1) + ' MB';
+  if (n > 1024) return (n/1024).toFixed(0) + ' KB';
+  return n + ' B';
+}
+
+function setStatus(t, cls){
+  statusEl.className = 'tip ' + (cls || '');
+  statusEl.textContent = t;
+}
+
+drop.addEventListener('click', () => picker.click());
+picker.addEventListener('change', () => { upload([...picker.files]); picker.value = ''; });
+['dragover','dragenter'].forEach(e => drop.addEventListener(e, ev => { ev.preventDefault(); drop.classList.add('over'); }));
+['dragleave','drop'].forEach(e => drop.addEventListener(e, ev => { ev.preventDefault(); drop.classList.remove('over'); }));
+drop.addEventListener('drop', ev => upload([...ev.dataTransfer.files]));
+
+async function upload(files){
+  if (!files.length) return;
+  bar.style.display = 'block';
+  for (let i = 0; i < files.length; i++) {
+    const f = files[i];
+    setStatus('正在发送 ' + f.name + '（' + (i+1) + '/' + files.length + '）');
+    barIn.style.width = '0%';
+    try {
+      await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('PUT', '/upload?name=' + encodeURIComponent(f.name));
+        xhr.upload.onprogress = e => {
+          if (e.lengthComputable) {
+            const p = e.loaded / e.total * 100;
+            barIn.style.width = p.toFixed(1) + '%';
+            setStatus('正在发送 ' + f.name + ' · ' + p.toFixed(0) + '%');
+          }
+        };
+        xhr.onload = () => {
+          try {
+            const r = JSON.parse(xhr.responseText);
+            r.ok ? resolve(r) : reject(new Error(r.msg || '上传失败'));
+          } catch (e) { reject(new Error('响应异常')); }
+        };
+        xhr.onerror = () => reject(new Error('网络中断'));
+        xhr.send(f);
+      });
+      setStatus('已发送 ' + f.name, 'ok');
+    } catch (e) {
+      setStatus(e.message, 'err');
+    }
+  }
+  bar.style.display = 'none';
+  barIn.style.width = '0%';
+  load();
+}
+
+async function load(){
+  const box = document.getElementById('list');
+  try {
+    const r = await (await fetch('/api/files', {cache:'no-store'})).json();
+    if (!r.files.length) { box.innerHTML = '<div class="meta">还没有文件</div>'; return; }
+    box.innerHTML = r.files.map(f => `
+      <div class="file">
+        <div style="flex:1;min-width:0">
+          <div class="name">${escapeHtml(f.name)}</div>
+          <div class="meta">${fmt(f.size)}</div>
+        </div>
+        <button onclick="install('${encodeURIComponent(f.name)}')">安装/打开</button>
+        <button class="ghost" onclick="del('${encodeURIComponent(f.name)}')">删</button>
+      </div>`).join('');
+  } catch (e) {
+    box.innerHTML = '<div class="meta err">读取失败</div>';
+  }
+}
+
+function escapeHtml(s){
+  return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+async function install(name){
+  const r = await (await fetch('/install?name=' + name, {method:'POST'})).json();
+  setStatus(r.msg || (r.ok ? '已请求安装' : '失败'), r.ok ? 'ok' : 'err');
+}
+
+async function del(name){
+  if (!confirm('删除这个文件？')) return;
+  await fetch('/delete?name=' + name, {method:'POST'});
+  load();
+}
+
+load();
+setInterval(load, 4000);
+</script>
+</body>
+</html>
