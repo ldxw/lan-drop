@@ -11,11 +11,26 @@
 
 ## 特性
 
-- **零第三方依赖**：HTTP 服务是自己用 `ServerSocket` 写的，没有 NanoHTTPD / OkHttp
-- **原始流上传**：手机端用 `PUT` 直接推字节流，服务端按 `Content-Length` 落盘，省掉 multipart 解析
+- **二维码直达**：电视屏幕上直接显示上传页二维码，手机扫码即开，不用手输 IP
+- **整个文件夹**：手机端可以选目录，按 `目录/子目录/文件` 相对路径原样落到电视上
+- **断点续传**：4 MB 分块上传，每块带 `offset`；断网/息屏/关页面后重新选同一个文件，会从已收到的字节继续，不会重传
+- **零第三方依赖**（QR 除外）：HTTP 服务是自己用 `ServerSocket` 写的，没有 NanoHTTPD / OkHttp；二维码用 `zxing-core`
+- **原始流上传**：`PUT` 直接推字节流，服务端按 `Content-Length` 落盘，省掉 multipart 解析
 - **前台服务 + WakeLock**：熄屏、切后台都能继续接收
 - **TV 原生**：声明 `LEANBACK_LAUNCHER`，`touchscreen required=false`，遥控器可操作，minSdk 21
 - 端口固定 `8888`，文件存在应用私有目录 `Android/data/top.ldxw.landrop/files/received`
+
+## 接口（页面自己用，也可脚本调用）
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/` | 上传页面 |
+| GET | `/api/files` | 递归列出已收文件（相对路径） |
+| GET | `/api/stat?name=a/b.apk` | 查已收到多少字节，续传用 |
+| PUT | `/upload?name=a/b.apk&offset=N` | 从第 N 字节写；不带 offset 或 offset=0 则从头写 |
+| GET | `/d?name=a/b.apk` | 下载 |
+| POST | `/install?name=a/b.apk` | 让电视弹安装框 |
+| POST | `/delete?name=a/b.apk` | 删除（空目录会自动清掉） |
 
 ## 编译
 
@@ -32,6 +47,7 @@ gradle assembleRelease
 - 只在局域网内监听，没有鉴权，**不要把这个端口映射到公网**
 - 电视上的「安装」走系统安装器，会弹确认框，这是 Android 的限制
 - 接收目录是应用私有的，卸载应用会一起删掉
+- 续传是按「相对路径 + 已收到字节数」判断的，改名再传会被当成新文件
 
 ## License
 

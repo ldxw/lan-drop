@@ -3,6 +3,8 @@ package top.ldxw.landrop
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -11,22 +13,30 @@ import android.os.Looper
 import android.view.Gravity
 import android.view.View
 import android.widget.Button
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.core.content.FileProvider
+import com.google.zxing.BarcodeFormat
+import com.google.zxing.EncodeHintType
+import com.google.zxing.qrcode.QRCodeWriter
+import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel
 import java.io.File
 
 class MainActivity : android.app.Activity() {
 
     private lateinit var statusView: TextView
     private lateinit var urlView: TextView
+    private lateinit var qrView: ImageView
+    private lateinit var qrHint: TextView
     private lateinit var toggleButton: Button
     private lateinit var listBox: LinearLayout
     private lateinit var hintView: TextView
 
     private val handler = Handler(Looper.getMainLooper())
     private var lastSignature: String = ""
+    private var lastQrUrl: String = ""
 
     private val tick = object : Runnable {
         override fun run() {
@@ -41,6 +51,8 @@ class MainActivity : android.app.Activity() {
 
         statusView = findViewById(R.id.status)
         urlView = findViewById(R.id.url)
+        qrView = findViewById(R.id.qr)
+        qrHint = findViewById(R.id.qrHint)
         toggleButton = findViewById(R.id.toggle)
         listBox = findViewById(R.id.fileList)
         hintView = findViewById(R.id.hint)
@@ -48,9 +60,7 @@ class MainActivity : android.app.Activity() {
         ServerService.installCallback = { file -> runOnUiThread { installFile(file) } }
 
         toggleButton.setOnClickListener {
-            if (ServerService.running) {
-                ServerService.stop(this)
-            } else {
+            if (ServerService.running) ServerService.stop(this) else {
                 ensureNotificationPermission()
                 ServerService.start(this)
             }
@@ -84,28 +94,37 @@ class MainActivity : android.app.Activity() {
         val ip = Net.localIpv4()
 
         if (running && ip != null) {
+            val url = "http://$ip:${ServerService.PORT}"
             statusView.text = "● 正在接收文件"
-            urlView.text = "http://$ip:${ServerService.PORT}"
+            urlView.text = url
             urlView.visibility = View.VISIBLE
-            hintView.text = "手机连同一个 Wi-Fi，用浏览器打开上面这个地址，选文件就能传过来。\n传完的文件会出现在下面，可以直接安装 APK。"
+            if (url != lastQrUrl) {
+                lastQrUrl = url
+                qrView.setImageBitmap(qrBitmap(url, 720))
+            }
+            qrView.visibility = View.VISIBLE
+            qrHint.visibility = View.VISIBLE
+            hintView.text = "用手机相机扫上面的码，或浏览器输入这个地址；手机和电视要连同一个 Wi-Fi。\n传完的文件在下面，可以直接安装 APK。"
             toggleButton.text = "停止服务"
         } else if (running) {
             statusView.text = "● 已启动，但没连上局域网"
             urlView.text = "请检查电视的网络连接"
+            urlView.visibility = View.VISIBLE
+            qrView.visibility = View.GONE
+            qrHint.visibility = View.GONE
             hintView.text = "电视没有拿到局域网 IP。连上 Wi-Fi 或有线网络后会自动刷新。"
             toggleButton.text = "停止服务"
         } else {
             statusView.text = "○ 未启动"
             urlView.visibility = View.GONE
+            qrView.visibility = View.GONE
+            qrHint.visibility = View.GONE
             hintView.text = "点下面的按钮启动服务。"
             toggleButton.text = "启动服务"
         }
 
-        val files = ServerService.server?.let { s ->
-            ServerService.receivedDir(this).listFiles()?.filter { it.isFile }
-                ?.sortedByDescending { it.lastModified() } ?: emptyList()
-        } ?: emptyList()
-
+        val files = if (running) Storage.walk(ServerService.receivedDir(this))
+            .sortedByDescending { it.lastModified() } else emptyList()
         val sig = files.joinToString("|") { "${it.name}:${it.length()}:${it.lastModified()}" }
         if (sig != lastSignature) {
             lastSignature = sig
@@ -119,19 +138,29 @@ class MainActivity : android.app.Activity() {
             listBox.addView(textView("还没有收到文件", 16f, 0xFF8B949E.toInt()))
             return
         }
+        val root = ServerService.receivedDir(this)
         for (f in files) {
+            val rel = Storage.relName(root, f)
             val row = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
                 setPadding(0, dp(6), 0, dp(6))
             }
-            val name = textView(f.name, 18f, 0xFFE8EAED.toInt()).apply {
+            val column = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
                 layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            }
+            column.addView(textView(f.name, 18f, 0xFFE8EAED.toInt()).apply {
                 ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
                 maxLines = 1
+            })
+            if (rel != f.name) {
+                column.addView(textView(rel, 13f, 0xFF6B7684.toInt()).apply {
+                    ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
+                    maxLines = 1
+                })
             }
-            row.addView(name)
-
+            row.addView(column)
             row.addView(smallButton("安装") { installFile(f) })
             row.addView(smallButton("删除") {
                 if (f.delete()) {
@@ -143,6 +172,22 @@ class MainActivity : android.app.Activity() {
             })
             listBox.addView(row)
         }
+    }
+
+    private fun qrBitmap(text: String, size: Int): Bitmap {
+        val hints = mapOf(
+            EncodeHintType.CHARACTER_SET to "UTF-8",
+            EncodeHintType.MARGIN to 1,
+            EncodeHintType.ERROR_CORRECTION to ErrorCorrectionLevel.M
+        )
+        val matrix = QRCodeWriter().encode(text, BarcodeFormat.QR_CODE, size, size, hints)
+        val bmp = Bitmap.createBitmap(matrix.width, matrix.height, Bitmap.Config.ARGB_8888)
+        for (y in 0 until matrix.height) {
+            for (x in 0 until matrix.width) {
+                bmp.setPixel(x, y, if (matrix.get(x, y)) Color.BLACK else Color.WHITE)
+            }
+        }
+        return bmp
     }
 
     private fun textView(text: String, size: Float, color: Int): TextView = TextView(this).apply {

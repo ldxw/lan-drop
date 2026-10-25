@@ -47,6 +47,28 @@
             android:textSize="34sp"
             android:visibility="gone" />
 
+
+        <ImageView
+            android:id="@+id/qr"
+            android:layout_width="260dp"
+            android:layout_height="260dp"
+            android:layout_marginTop="16dp"
+            android:background="#FFFFFFFF"
+            android:padding="8dp"
+            android:scaleType="fitCenter"
+            android:visibility="gone"
+            android:contentDescription="@string/qr_desc" />
+
+        <TextView
+            android:id="@+id/qrHint"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:text="@string/qr_hint"
+            android:textColor="@color/muted"
+            android:textSize="14sp"
+            android:visibility="gone" />
+
         <TextView
             android:id="@+id/hint"
             android:layout_width="match_parent"

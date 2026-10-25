@@ -3,9 +3,9 @@ package top.ldxw.landrop
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.File
-import java.io.FileOutputStream
 import java.io.InputStream
 import java.io.OutputStream
+import java.io.RandomAccessFile
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
@@ -15,10 +15,11 @@ import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * 极简 HTTP 服务：只做三件事
- *  - GET  /            手机浏览器打开的上传页面（选文件 → PUT 原始流上传，带进度）
- *  - PUT  /upload      原始字节写入文件（不走 multipart，省掉一整套解析）
- *  - 其余 api、d、install、delete 接口供页面和电视端调用
+ * 极简 HTTP 服务，包含四个能力：
+ *  - GET  /              手机浏览器打开的上传页面（整文件夹、断点续传都在页面里做）
+ *  - PUT  /upload?...    ？offset=N 表示从这个字节位置续写，不带 offset 就从头写
+ *  - GET  /api/stat      查询某个文件已收到多少字节，用来续传
+ *  - GET  /api/files     递归列出已收到的文件
  */
 class HttpServer(
     private val port: Int,
@@ -67,7 +68,7 @@ class HttpServer(
 
     private fun handle(socket: Socket) {
         try {
-            socket.soTimeout = 300_000
+            socket.soTimeout = 600_000
             val input = BufferedInputStream(socket.getInputStream(), 64 * 1024)
             val out = BufferedOutputStream(socket.getOutputStream(), 64 * 1024)
 
@@ -88,25 +89,29 @@ class HttpServer(
             }
 
             when {
-                method == "GET" && (path == "/" || path == "/index.html") -> sendHtml(out, page())
+                method == "GET" && (path == "/" || path == "/index.html") -> sendHtml(out, pageHtml)
                 method == "GET" && path == "/api/files" -> sendJson(out, filesJson())
+                method == "GET" && path == "/api/stat" -> sendJson(out, statJson(query["name"]))
                 method == "GET" && path == "/d" -> sendFile(out, query["name"])
                 method == "PUT" && path == "/upload" -> receiveUpload(out, input, headers, query)
                 method == "POST" && path == "/upload" -> receiveUpload(out, input, headers, query)
                 method == "POST" && path == "/install" -> {
                     val f = safeFile(query["name"])
-                    if (f != null && f.exists()) {
+                    if (f != null && f.isFile) {
                         onInstallRequest(f)
-                        sendJson(out, """{"ok":true,"msg":"已在电视上弹出安装确认"}""")
+                        sendJson(out, "{\"ok\":true,\"msg\":\"已在电视上弹出安装确认\"}")
                     } else {
-                        sendJson(out, """{"ok":false,"msg":"文件不存在"}""")
+                        sendJson(out, "{\"ok\":false,\"msg\":\"文件不存在\"}")
                     }
                 }
                 method == "POST" && path == "/delete" -> {
                     val f = safeFile(query["name"])
-                    val ok = f != null && f.exists() && f.delete()
-                    if (ok) onFilesChanged()
-                    sendJson(out, """{"ok":$ok}""")
+                    val ok = f != null && f.isFile && f.delete()
+                    if (ok) {
+                        pruneEmptyDirs(f.parentFile)
+                        onFilesChanged()
+                    }
+                    sendJson(out, "{\"ok\":$ok}")
                 }
                 else -> sendText(out, 404, "Not Found")
             }
@@ -141,7 +146,7 @@ class HttpServer(
         }
     }
 
-    // ---------------------------------------------------------------- 上传
+    // ---------------------------------------------------------------- 上传 / 续传
 
     private fun receiveUpload(
         out: OutputStream,
@@ -150,84 +155,117 @@ class HttpServer(
         query: Map<String, String>
     ) {
         val rawName = query["name"] ?: headers["x-file-name"] ?: "upload.bin"
-        val name = sanitize(rawName)
-        if (name.isEmpty()) {
-            sendJson(out, """{"ok":false,"msg":"文件名非法"}""")
+        val target = safeFile(rawName)
+        if (target == null) {
+            sendJson(out, "{\"ok\":false,\"msg\":\"文件名非法\"}")
             return
         }
+        val offset = query["offset"]?.toLongOrNull() ?: 0L
         val length = headers["content-length"]?.toLongOrNull() ?: -1L
-        val target = File(saveDir, uniqueName(name))
-        var written = 0L
+
+        if (offset > 0 && !target.isFile) {
+            sendJson(out, "{\"ok\":false,\"restart\":true,\"msg\":\"文件已不存在，需要重新开始\"}")
+            return
+        }
+        if (offset > 0 && offset > target.length()) {
+            sendJson(out, "{\"ok\":false,\"restart\":true,\"msg\":\"偏移超出已有长度\"}")
+            return
+        }
+
         try {
-            FileOutputStream(target).use { fos ->
+            target.parentFile?.mkdirs()
+            RandomAccessFile(target, "rw").use { raf ->
+                if (offset == 0L) raf.setLength(0) else raf.seek(offset)
                 val buf = ByteArray(256 * 1024)
                 if (length >= 0) {
                     var remain = length
                     while (remain > 0) {
                         val read = input.read(buf, 0, minOf(buf.size.toLong(), remain).toInt())
                         if (read < 0) break
-                        fos.write(buf, 0, read)
+                        raf.write(buf, 0, read)
                         remain -= read
-                        written += read
                     }
                 } else {
                     while (true) {
                         val read = input.read(buf)
                         if (read < 0) break
-                        fos.write(buf, 0, read)
-                        written += read
+                        raf.write(buf, 0, read)
                     }
                 }
             }
             onFilesChanged()
-            val jsonName = jsonEscape(target.name)
-            sendJson(out, """{"ok":true,"name":"$jsonName","size":$written}""")
+            val rel = relName(target)
+            sendJson(out, "{\"ok\":true,\"name\":\"${jsonEscape(rel)}\",\"size\":${target.length()}}")
         } catch (e: Exception) {
-            target.delete()
-            sendJson(out, """{"ok":false,"msg":"${jsonEscape(e.message ?: "写入失败")}"}""")
+            sendJson(out, "{\"ok\":false,\"msg\":\"${jsonEscape(e.message ?: "写入失败")}\"}")
         }
     }
 
-    private fun uniqueName(name: String): String {
-        var f = File(saveDir, name)
-        if (!f.exists()) return name
-        val dot = name.lastIndexOf('.')
-        val base = if (dot > 0) name.substring(0, dot) else name
-        val ext = if (dot > 0) name.substring(dot) else ""
-        var i = 1
-        while (true) {
-            f = File(saveDir, "$base($i)$ext")
-            if (!f.exists()) return f.name
-            i++
+    private fun statJson(name: String?): String {
+        val f = safeFile(name)
+        return if (f != null && f.isFile) {
+            "{\"ok\":true,\"exists\":true,\"size\":${f.length()}}"
+        } else {
+            "{\"ok\":true,\"exists\":false,\"size\":0}"
         }
     }
 
-    private fun sanitize(name: String): String {
-        val base = name.substringAfterLast('/').substringAfterLast('\\')
-        return base.replace(Regex("[\\u0000-\\u001f]"), "").trim().take(180)
-    }
+    // ---------------------------------------------------------------- 路径
 
+    /**
+     * 支持 a/b/c.apk 这样的相对路径（整文件夹上传），逐段过滤，挡住 .. 和绝对路径。
+     */
     private fun safeFile(name: String?): File? {
         if (name.isNullOrBlank()) return null
-        val n = sanitize(name)
-        if (n.isEmpty() || n == "." || n == "..") return null
-        val f = File(saveDir, n)
-        return if (f.canonicalPath.startsWith(saveDir.canonicalPath + File.separator)) f else null
+        val parts = name.replace('\\', '/').split('/')
+            .map { sanitizeSegment(it) }
+            .filter { it.isNotEmpty() }
+        if (parts.isEmpty()) return null
+        var f = saveDir
+        for (p in parts) f = File(f, p)
+        val root = saveDir.canonicalPath + File.separator
+        return if (f.canonicalPath.startsWith(root)) f else null
+    }
+
+    private fun sanitizeSegment(seg: String): String {
+        val s = seg.replace(Regex("[\\u0000-\\u001f]"), "").trim()
+        if (s == "." || s == "..") return ""
+        return s.take(120)
+    }
+
+    private fun relName(f: File): String =
+        f.canonicalPath.removePrefix(saveDir.canonicalPath + File.separator).replace(File.separatorChar, '/')
+
+    private fun pruneEmptyDirs(dir: File?) {
+        var d = dir ?: return
+        while (d.canonicalPath != saveDir.canonicalPath && d.isDirectory && (d.list()?.isEmpty() ?: false)) {
+            d.delete()
+            d = d.parentFile ?: return
+        }
+    }
+
+    private fun walk(dir: File, out: MutableList<File>) {
+        val children = dir.listFiles() ?: return
+        for (c in children) {
+            if (c.isDirectory) walk(c, out) else out.add(c)
+        }
     }
 
     // ---------------------------------------------------------------- 输出
 
     private fun filesJson(): String {
-        val list = saveDir.listFiles()?.filter { it.isFile }?.sortedByDescending { it.lastModified() } ?: emptyList()
-        val items = list.joinToString(",") { f ->
-            """{"name":"${jsonEscape(f.name)}","size":${f.length()},"time":${f.lastModified()}}"""
+        val all = ArrayList<File>()
+        walk(saveDir, all)
+        val sorted = all.sortedByDescending { it.lastModified() }
+        val items = sorted.joinToString(",") { f ->
+            "{\"name\":\"${jsonEscape(relName(f))}\",\"size\":${f.length()},\"time\":${f.lastModified()}}"
         }
-        return """{"ok":true,"files":[$items]}"""
+        return "{\"ok\":true,\"files\":[$items]}"
     }
 
     private fun sendFile(out: OutputStream, name: String?) {
         val f = safeFile(name)
-        if (f == null || !f.exists()) {
+        if (f == null || !f.isFile) {
             sendText(out, 404, "Not Found")
             return
         }
@@ -288,8 +326,4 @@ class HttpServer(
             }
         }
     }
-
-    // ---------------------------------------------------------------- 页面
-
-    private fun page(): String = pageHtml
 }
