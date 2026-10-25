@@ -25,6 +25,8 @@ jobs:
           gradle-version: '8.7'
 
       - name: 编译 APK
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
         run: gradle assembleRelease --no-daemon -x lint
 
       - name: 上传产物

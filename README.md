@@ -43,6 +43,14 @@
 | POST | `/api/settings?proxy=..&autoCheck=1` | 修改电视设置 |
 | GET | `/api/ping?url=<加速地址>` | 测加速地址能否拉到 update.json |
 
+## 签名
+
+`keystore/landrop-release.p12` 提交在仓库里，密码放在 GitHub 仓库 secret `KEYSTORE_PASSWORD`。
+CI 每次构建都用同一把证书，所以新版本可以**直接覆盖安装**，记录不丢。
+本地没有设置 `KEYSTORE_PASSWORD` 时会自动回退到 debug 签名（仅供自己编译验证）。
+
+证书 SHA-256：`61:2E:AD:A8:90:F1:B1:B8:DA:A5:E0:24:77:9E:A6:4A:5F:00:5A:2E:15:43:65:82:C2:93:EB:B0:E7:98:CF:3B`
+
 ## 编译
 
 推送到 `main` 分支由 GitHub Actions 自动构建，产物在 Actions 的 `landrop-apk` artifact；打 `v*` tag 会发 Release。
