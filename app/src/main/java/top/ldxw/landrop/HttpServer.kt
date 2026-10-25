@@ -108,7 +108,7 @@ class HttpServer(
                     val f = safeFile(query["name"])
                     val ok = f != null && f.isFile && f.delete()
                     if (ok) {
-                        pruneEmptyDirs(f.parentFile)
+                        pruneEmptyDirs(f?.parentFile)
                         onFilesChanged()
                     }
                     sendJson(out, "{\"ok\":$ok}")
