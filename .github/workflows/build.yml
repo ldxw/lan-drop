@@ -34,8 +34,26 @@ jobs:
           path: app/build/outputs/apk/release/*.apk
           if-no-files-found: error
 
+      - name: 生成 update.json
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          VER=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts | head -1)
+          CODE=$(grep -oP 'versionCode = \K[0-9]+' app/build.gradle.kts | head -1)
+          cat > update.json <<EOF
+          {
+            "version": "$VER",
+            "versionCode": $CODE,
+            "url": "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/app-release.apk",
+            "notes": "更新说明见 Release 页面",
+            "publishedAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          }
+          EOF
+          cat update.json
+
       - name: 发布 Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: app/build/outputs/apk/release/*.apk
+          files: |
+            app/build/outputs/apk/release/*.apk
+            update.json

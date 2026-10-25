@@ -26,7 +26,9 @@ class HttpServer(
     private val saveDir: File,
     private val pageHtml: String,
     private val onFilesChanged: () -> Unit,
-    private val onInstallRequest: (File) -> Unit
+    private val onInstallRequest: (File) -> Unit,
+    private val settingsSnapshot: () -> Map<String, String>,
+    private val settingsApply: (Map<String, String>) -> Unit
 ) {
     private var serverSocket: ServerSocket? = null
     private val pool = Executors.newCachedThreadPool()
@@ -93,6 +95,12 @@ class HttpServer(
                 method == "GET" && path == "/api/files" -> sendJson(out, filesJson())
                 method == "GET" && path == "/api/stat" -> sendJson(out, statJson(query["name"]))
                 method == "GET" && path == "/d" -> sendFile(out, query["name"])
+                method == "GET" && path == "/api/settings" -> sendJson(out, settingsJson(settingsSnapshot()))
+                method == "GET" && path == "/api/ping" -> sendJson(out, pingJson(query["url"] ?: ""))
+                method == "POST" && path == "/api/settings" -> {
+                    settingsApply(query)
+                    sendJson(out, settingsJson(settingsSnapshot()))
+                }
                 method == "PUT" && path == "/upload" -> receiveUpload(out, input, headers, query)
                 method == "POST" && path == "/upload" -> receiveUpload(out, input, headers, query)
                 method == "POST" && path == "/install" -> {
@@ -199,6 +207,21 @@ class HttpServer(
         } catch (e: Exception) {
             sendJson(out, "{\"ok\":false,\"msg\":\"${jsonEscape(e.message ?: "写入失败")}\"}")
         }
+    }
+
+    /** 测加速地址通不通：拉一次 update.json，看耗时。 */
+    private fun pingJson(proxy: String): String {
+        val start = System.currentTimeMillis()
+        val body = Update.fetch(Update.withProxy(proxy, Update.UPDATE_URL), 8000)
+        val ms = System.currentTimeMillis() - start
+        return if (body != null) "{\"ok\":true,\"ms\":$ms}" else "{\"ok\":false,\"ms\":$ms}"
+    }
+
+    private fun settingsJson(map: Map<String, String>): String {
+        val body = map.entries.joinToString(",") { (k, v) ->
+            "\"" + jsonEscape(k) + "\":\"" + jsonEscape(v) + "\""
+        }
+        return "{\"ok\":true,\"settings\":{$body}}"
     }
 
     private fun statJson(name: String?): String {

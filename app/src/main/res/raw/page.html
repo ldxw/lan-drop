@@ -30,6 +30,12 @@
   .bar > i { display:block; height:100%; width:0; background:#2b6cf6; transition:width .15s linear; }
   .tip { color:#8b949e; font-size:12px; margin-top:10px; line-height:1.6; }
   .ok { color:#39d353; } .err { color:#ff6b6b; }
+  .input { width:100%; padding:12px 14px; border-radius:10px; border:1px solid #2f3947;
+           background:#111418; color:#e8eaed; font-size:14px; margin-bottom:10px; }
+  .presets { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:12px; }
+  .presets button { background:#232a33; color:#c8d1dc; font-weight:500; font-size:13px; padding:8px 12px; }
+  .presets button.active { background:#2b6cf6; color:#fff; }
+  .check { display:flex; align-items:center; gap:8px; color:#9aa4b2; font-size:13px; margin-bottom:12px; }
   .path { display:inline-block; max-width:100%; overflow:hidden; text-overflow:ellipsis;
           white-space:nowrap; vertical-align:bottom; color:#6b7684; font-size:11px; }
 </style>
@@ -51,6 +57,23 @@
     <input type="file" id="dirInput" webkitdirectory multiple hidden>
     <div class="bar" id="bar"><i id="barIn"></i></div>
     <div class="tip" id="status"></div>
+  </div>
+
+
+  <div class="card">
+    <div class="row" style="justify-content:space-between;margin-bottom:8px">
+      <div class="big" style="margin:0">电视设置</div>
+      <span class="meta" id="settingsState"></span>
+    </div>
+    <div class="meta" style="margin-bottom:8px">GitHub 加速地址：更新检查和新版下载都会走这里。留空 = 直连。</div>
+    <input id="proxyInput" class="input" type="text" inputmode="url" autocomplete="off"
+           placeholder="https://gh-proxy.com/">
+    <div class="presets" id="presets"></div>
+    <label class="check"><input type="checkbox" id="autoCheck"> 启动时自动检查更新</label>
+    <div class="btns">
+      <button id="saveSettings">保存到电视</button>
+      <button class="ghost" id="testProxy">测试连通</button>
+    </div>
   </div>
 
   <div class="card">
@@ -222,6 +245,62 @@ async function del(name){
   load();
 }
 
+const PRESETS = [
+  {label:'直连', value:''},
+  {label:'gh-proxy.com', value:'https://gh-proxy.com/'},
+  {label:'ghfast.top', value:'https://ghfast.top/'},
+  {label:'ghproxy.net', value:'https://ghproxy.net/'}
+];
+const proxyInput = document.getElementById('proxyInput');
+const autoCheckBox = document.getElementById('autoCheck');
+const settingsState = document.getElementById('settingsState');
+
+function renderPresets(current){
+  const box = document.getElementById('presets');
+  box.innerHTML = PRESETS.map((p, i) =>
+    `<button data-v="${p.value}" class="${p.value === current ? 'active' : ''}">${p.label}</button>`).join('') +
+    `<button data-v="__custom">自定义</button>`;
+  box.querySelectorAll('button').forEach(b => b.onclick = () => {
+    if (b.dataset.v === '__custom') { proxyInput.focus(); return; }
+    proxyInput.value = b.dataset.v;
+    renderPresets(b.dataset.v);
+  });
+}
+
+async function loadSettings(){
+  try {
+    const r = await (await fetch('/api/settings', {cache:'no-store'})).json();
+    const s = r.settings || {};
+    proxyInput.value = s.proxy || '';
+    autoCheckBox.checked = s.autoCheck === '1';
+    renderPresets(s.proxy || '');
+    settingsState.textContent = s.proxy ? '当前：加速' : '当前：直连';
+  } catch (e) { settingsState.textContent = '读取设置失败'; }
+}
+
+document.getElementById('saveSettings').onclick = async () => {
+  const proxy = proxyInput.value.trim();
+  const auto = autoCheckBox.checked ? '1' : '0';
+  try {
+    const r = await (await fetch('/api/settings?proxy=' + encodeURIComponent(proxy) + '&autoCheck=' + auto, {
+      method:'POST'
+    })).json();
+    settingsState.textContent = '已保存到电视';
+    renderPresets((r.settings && r.settings.proxy) || '');
+    setStatus('电视设置已更新：' + (proxy || '直连 GitHub'), 'ok');
+  } catch (e) { settingsState.textContent = '保存失败'; }
+};
+
+document.getElementById('testProxy').onclick = async () => {
+  const proxy = proxyInput.value.trim();
+  settingsState.textContent = '测试中…';
+  try {
+    const r = await (await fetch('/api/ping?url=' + encodeURIComponent(proxy), {cache:'no-store'})).json();
+    settingsState.textContent = r.ok ? ('连通 ' + (r.ms || '') + 'ms') : '不通';
+  } catch (e) { settingsState.textContent = '测试失败'; }
+};
+
+loadSettings();
 load();
 setInterval(() => { if (!busy) load(); }, 5000);
 </script>

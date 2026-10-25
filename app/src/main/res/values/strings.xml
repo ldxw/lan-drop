@@ -8,4 +8,5 @@
     <string name="stop">停止服务</string>
     <string name="qr_hint">手机扫码直接打开上传页</string>
     <string name="qr_desc">上传页二维码</string>
+    <string name="check_update">检查更新</string>
 </resources>

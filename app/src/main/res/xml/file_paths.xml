@@ -3,4 +3,5 @@
     <external-files-path name="received" path="received/" />
     <external-files-path name="ext" path="." />
     <files-path name="internal" path="." />
+    <cache-path name="cache" path="." />
 </paths>

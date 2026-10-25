@@ -20,6 +20,14 @@
 - **TV 原生**：声明 `LEANBACK_LAUNCHER`，`touchscreen required=false`，遥控器可操作，minSdk 21
 - 端口固定 `8888`，文件存在应用私有目录 `Android/data/top.ldxw.landrop/files/received`
 
+## 检查更新与加速地址
+
+- 电视端「检查更新」按 `update.json` 比对 `versionCode`，有新版本会弹框，下载后用系统安装器安装
+- 更新地址固定为 GitHub Releases：`https://github.com/ldxw/lan-drop/releases/latest/download/update.json`
+- **加速地址**可在手机上传页的「电视设置」里改（预设：直连 / gh-proxy.com / ghfast.top / ghproxy.net，也可自定义），保存后立即生效，电视端不用碰遥控器
+- 默认加速地址：`https://gh-proxy.com/`；留空表示直连 GitHub
+- 手机端「测试连通」会真的去拉一次 `update.json` 并回报耗时
+
 ## 接口（页面自己用，也可脚本调用）
 
 | 方法 | 路径 | 说明 |
@@ -31,6 +39,9 @@
 | GET | `/d?name=a/b.apk` | 下载 |
 | POST | `/install?name=a/b.apk` | 让电视弹安装框 |
 | POST | `/delete?name=a/b.apk` | 删除（空目录会自动清掉） |
+| GET | `/api/settings` | 读取电视设置（加速地址、自动检查） |
+| POST | `/api/settings?proxy=..&autoCheck=1` | 修改电视设置 |
+| GET | `/api/ping?url=<加速地址>` | 测加速地址能否拉到 update.json |
 
 ## 编译
 

@@ -88,7 +88,9 @@ class ServerService : Service() {
             onInstallRequest = { file ->
                 val cb = installCallback
                 android.os.Handler(mainLooper).post { cb?.invoke(file) }
-            }
+            },
+            settingsSnapshot = { Settings.of(this).snapshot() },
+            settingsApply = { Settings.of(this).apply(it) }
         )
         try {
             s.start()

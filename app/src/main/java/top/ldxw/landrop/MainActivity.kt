@@ -1,6 +1,7 @@
 package top.ldxw.landrop
 
 import android.Manifest
+import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
@@ -31,12 +32,17 @@ class MainActivity : android.app.Activity() {
     private lateinit var qrView: ImageView
     private lateinit var qrHint: TextView
     private lateinit var toggleButton: Button
+    private lateinit var checkUpdateButton: Button
+    private lateinit var updateStatusView: TextView
+    private lateinit var settingsLine: TextView
     private lateinit var listBox: LinearLayout
     private lateinit var hintView: TextView
 
     private val handler = Handler(Looper.getMainLooper())
     private var lastSignature: String = ""
     private var lastQrUrl: String = ""
+    private var checking = false
+    private var autoChecked = false
 
     private val tick = object : Runnable {
         override fun run() {
@@ -54,6 +60,9 @@ class MainActivity : android.app.Activity() {
         qrView = findViewById(R.id.qr)
         qrHint = findViewById(R.id.qrHint)
         toggleButton = findViewById(R.id.toggle)
+        checkUpdateButton = findViewById(R.id.checkUpdate)
+        updateStatusView = findViewById(R.id.updateStatus)
+        settingsLine = findViewById(R.id.settingsLine)
         listBox = findViewById(R.id.fileList)
         hintView = findViewById(R.id.hint)
 
@@ -67,9 +76,82 @@ class MainActivity : android.app.Activity() {
             handler.postDelayed({ refresh() }, 300)
         }
 
+        checkUpdateButton.setOnClickListener { checkUpdates(false) }
+
         ensureNotificationPermission()
         ServerService.start(this)
+        handler.postDelayed({
+            if (!autoChecked && Settings.of(this).autoCheck) {
+                autoChecked = true
+                checkUpdates(true)
+            }
+        }, 2500)
     }
+
+    /** silent=true 时只在发现新版本才提示，不打扰。 */
+    private fun checkUpdates(silent: Boolean) {
+        if (checking) return
+        checking = true
+        if (!silent) updateStatusView.text = "正在检查更新…"
+        Thread {
+            val settings = Settings.of(this)
+            val body = Update.fetch(Update.withProxy(settings.proxy, Update.UPDATE_URL))
+            val info = body?.let { Update.parse(it) }
+            val currentCode = currentVersionCode()
+            val currentName = currentVersionName()
+            runOnUiThread {
+                checking = false
+                when {
+                    info == null -> {
+                        if (!silent) updateStatusView.text = "检查失败：版本信息拉不到，换个加速地址试试"
+                    }
+                    Update.isNewer(info, currentCode) -> {
+                        updateStatusView.text = "发现新版本 v${info.versionName}"
+                        AlertDialog.Builder(this)
+                            .setTitle("发现新版本 v${info.versionName}")
+                            .setMessage(if (info.notes.isBlank()) "当前 v$currentName，是否下载并安装？" else info.notes)
+                            .setPositiveButton("下载并安装") { _, _ -> downloadAndInstall(info) }
+                            .setNegativeButton("稍后", null)
+                            .show()
+                    }
+                    else -> {
+                        if (!silent) updateStatusView.text = "已是最新版本 v$currentName"
+                    }
+                }
+            }
+        }.start()
+    }
+
+    private fun downloadAndInstall(info: Update.Info) {
+        val dest = File(cacheDir, "update.apk")
+        updateStatusView.text = "开始下载…"
+        Thread {
+            val url = Update.withProxy(Settings.of(this).proxy, info.apkUrl)
+            val ok = Update.download(url, dest) { done, total ->
+                if (total > 0) {
+                    val pct = (done * 100 / total).toInt()
+                    runOnUiThread { updateStatusView.text = "下载中 $pct%" }
+                }
+            }
+            runOnUiThread {
+                if (ok && dest.length() > 1024) {
+                    updateStatusView.text = "下载完成，正在安装"
+                    installFile(dest)
+                } else {
+                    updateStatusView.text = "下载失败，换个加速地址再试"
+                }
+            }
+        }.start()
+    }
+
+    private fun currentVersionCode(): Int {
+        val pi = packageManager.getPackageInfo(packageName, 0)
+        return if (Build.VERSION.SDK_INT >= 28) pi.longVersionCode.toInt()
+        else @Suppress("DEPRECATION") pi.versionCode
+    }
+
+    private fun currentVersionName(): String =
+        packageManager.getPackageInfo(packageName, 0).versionName ?: "1.0.0"
 
     override fun onResume() {
         super.onResume()
@@ -122,6 +204,9 @@ class MainActivity : android.app.Activity() {
             hintView.text = "点下面的按钮启动服务。"
             toggleButton.text = "启动服务"
         }
+
+        val proxy = Settings.of(this).proxy
+        settingsLine.text = "更新加速：${if (proxy.isBlank()) "直连 GitHub" else proxy}（可在手机上传页里改）"
 
         val files = if (running) Storage.walk(ServerService.receivedDir(this))
             .sortedByDescending { it.lastModified() } else emptyList()

@@ -3,7 +3,10 @@ if [ ! -d /opt/kotlinc ]; then
   mkdir -p /opt && cd /opt && jar xf /work/kotlin.zip && cd /work
   chmod -R +x /opt/kotlinc/bin
 fi
-/opt/kotlinc/bin/kotlinc src/HttpServer.kt src/Harness.kt -include-runtime -d /tmp/test.jar 2>&1 | grep -v "^warning:" || true
+/opt/kotlinc/bin/kotlinc src/HttpServer.kt src/Update.kt src/Harness.kt -include-runtime -d /tmp/test.jar 2>&1 | grep -v "^warning:" || true
+/opt/kotlinc/bin/kotlinc tools/jvmtest/UpdateTest.kt src/Update.kt -include-runtime -d /tmp/update.jar 2>&1 | grep -v "^warning:" || true
+echo "--- 0) Update 单元 ---"
+java -jar /tmp/update.jar | sed 's/^/  /'
 rm -rf /tmp/recv; mkdir -p /tmp/recv
 java -jar /tmp/test.jar /tmp/recv /work/page.html 18080 > /tmp/server.log 2>&1 &
 for i in $(seq 1 40); do grep -q STARTED /tmp/server.log && break; sleep 1; done
@@ -47,6 +50,10 @@ curl -s -X POST "http://127.0.0.1:18080/delete?name=%E5%89%A7%E9%9B%86/%E7%AC%AC
 curl -s -X POST "http://127.0.0.1:18080/delete?name=%E5%89%A7%E9%9B%86/%E7%AC%AC1%E5%AD%A3/02.mp4"; echo ""
 echo "  剩余目录: $(find /tmp/recv -type d | sed 's|/tmp/recv||' | tr '\n' ' ')"
 
-echo "--- 10) 安装请求 ---"
+echo "--- 10) 设置读写 ---"
+curl -s "http://127.0.0.1:18080/api/settings?proxy=https%3A%2F%2Fghfast.top%2F&autoCheck=0" -X POST; echo ""
+curl -s http://127.0.0.1:18080/api/settings; echo ""
+
+echo "--- 11) 安装请求 ---"
 curl -s -X POST "http://127.0.0.1:18080/install?name=big.apk"; echo ""
 grep INSTALL_REQUEST /tmp/server.log | sed 's/^/  /'
