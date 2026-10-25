@@ -30,7 +30,8 @@
   .bar > i { display:block; height:100%; width:0; background:#2b6cf6; transition:width .15s linear; }
   .tip { color:#8b949e; font-size:12px; margin-top:10px; line-height:1.6; }
   .ok { color:#39d353; } .err { color:#ff6b6b; }
-  .path { color:#6b7684; font-size:11px; }
+  .path { display:inline-block; max-width:100%; overflow:hidden; text-overflow:ellipsis;
+          white-space:nowrap; vertical-align:bottom; color:#6b7684; font-size:11px; }
 </style>
 </head>
 <body>
